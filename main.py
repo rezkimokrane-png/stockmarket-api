@@ -36,13 +36,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-executor = concurrent.futures.ThreadPoolExecutor(max_workers=12)
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 
-def run_sync(fn, *args):
-    """Run blocking IO in thread pool."""
-    loop = asyncio.get_event_loop()
-    return loop.run_in_executor(executor, fn, *args)
+def _get_loop():
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.new_event_loop()
 
 
 # ── Signal scoring ────────────────────────────────────────
@@ -146,7 +147,7 @@ async def get_indices(region: Optional[str] = None):
     """Get all live indices with ARIMA signals."""
     async def fetch_one(name):
         try:
-            loop = asyncio.get_event_loop()
+            loop = _get_loop()
             return await loop.run_in_executor(executor, _build_index, name)
         except Exception as e:
             return None
@@ -165,7 +166,7 @@ async def get_index(name: str):
     """Get single index with full ARIMA forecast."""
     if name not in INDEX_MAP:
         raise HTTPException(404, f"Index '{name}' not found")
-    loop = asyncio.get_event_loop()
+    loop = _get_loop()
     result = await loop.run_in_executor(executor, _build_index, name)
     # Add full forecast
     ticker = INDEX_MAP[name]["ticker"]
@@ -246,7 +247,7 @@ async def get_stocks(cat: Optional[str] = None):
 
     async def fetch_one(name):
         try:
-            loop = asyncio.get_event_loop()
+            loop = _get_loop()
             return await loop.run_in_executor(executor, _build_stock, name)
         except Exception as e:
             return None
@@ -268,7 +269,7 @@ async def get_stock(name: str):
     if not matched:
         raise HTTPException(404, f"Stock '{name}' not found")
 
-    loop   = asyncio.get_event_loop()
+    loop   = _get_loop()
     result = await loop.run_in_executor(executor, _build_stock, matched)
 
     # Add income history
@@ -293,7 +294,7 @@ async def get_forecast(ticker: str, horizons: str = "5,10,20"):
     if not h_list:
         h_list = [5, 10, 20]
 
-    loop = asyncio.get_event_loop()
+    loop = _get_loop()
     hist = await loop.run_in_executor(executor, get_history, ticker, "6mo")
 
     if hist.empty:
@@ -339,7 +340,7 @@ async def market_summary():
     Weekly market summary: top movers, signals, quick ARIMA view.
     Used for newsletter generation.
     """
-    loop = asyncio.get_event_loop()
+    loop = _get_loop()
 
     # Fetch 3 key indices
     key_indices = ["S&P 500", "CAC 40", "Nasdaq 100"]
