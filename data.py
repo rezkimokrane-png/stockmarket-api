@@ -106,11 +106,20 @@ def get_history(ticker: str, period: str = "3mo") -> pd.Series:
             return _cache_hist[key]
     try:
         log.info(f"Fetching history: {ticker} {period}")
-        t = yf.Ticker(ticker)
-        hist = t.history(period=period, timeout=15)
-        if hist is None or hist.empty:
+        # Use yf.download() — more reliable on cloud servers
+        df = yf.download(
+            ticker,
+            period=period,
+            auto_adjust=True,
+            progress=False,
+            timeout=20,
+        )
+        if df is None or df.empty:
             return pd.Series(dtype=float)
-        close = hist["Close"].dropna()
+        close = df["Close"].dropna()
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = close.squeeze()
         with _lock_hist:
             _cache_hist[key] = close
         return close
@@ -147,23 +156,44 @@ def get_fundamentals(ticker: str) -> dict:
             return _cache_info[key]
     try:
         log.info(f"Fetching fundamentals: {ticker}")
-        t    = yf.Ticker(ticker)
-        info = t.info or {}
-        roe_raw = info.get("returnOnEquity", 0) or 0
-        de_raw  = info.get("debtToEquity",  0) or 0
-        mg_raw  = info.get("profitMargins", 0) or 0
-        dy_raw  = info.get("dividendYield", 0) or 0
+        t = yf.Ticker(ticker)
+        # fast_info is lighter and less likely to be blocked
+        fi = t.fast_info
+        info = {}
+        try:
+            info = t.info or {}
+        except:
+            pass
+
+        def _get(key, default=None):
+            v = info.get(key)
+            if v is None:
+                try: v = getattr(fi, key, default)
+                except: pass
+            return v if v is not None else default
+
+        roe_raw = _get("returnOnEquity", 0) or 0
+        de_raw  = _get("debtToEquity",  0) or 0
+        mg_raw  = _get("profitMargins", 0) or 0
+        dy_raw  = _get("dividendYield", 0) or 0
+
+        # fast_info market cap fallback
+        mkt_cap = _get("marketCap")
+        if mkt_cap is None:
+            try: mkt_cap = fi.market_cap
+            except: mkt_cap = None
+
         result = {
-            "market_cap":     info.get("marketCap"),
-            "pe_ratio":       _safe(info.get("trailingPE"), 0),
-            "pb_ratio":       _safe(info.get("priceToBook"), 0),
+            "market_cap":     mkt_cap,
+            "pe_ratio":       _safe(_get("trailingPE"), 0),
+            "pb_ratio":       _safe(_get("priceToBook"), 0),
             "roe":            _safe(roe_raw * 100, 0),
             "debt_equity":    _safe(de_raw / 100 if de_raw > 5 else de_raw, 0),
             "net_margin":     _safe(mg_raw * 100, 0),
             "dividend_yield": _safe(dy_raw * 100, 0),
-            "revenue":        info.get("totalRevenue"),
-            "sector":         info.get("sector", ""),
-            "currency":       info.get("currency", "USD"),
+            "revenue":        _get("totalRevenue"),
+            "sector":         _get("sector", ""),
+            "currency":       _get("currency", "USD"),
         }
         with _lock_info:
             _cache_info[key] = result
