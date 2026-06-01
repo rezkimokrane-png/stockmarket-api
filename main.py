@@ -14,7 +14,7 @@ import time
 
 from data import (
     INDEX_MAP, STOCK_UNIVERSE,
-    get_price_data, get_fundamentals, get_income_history,
+    get_fundamentals, get_income_history,
     get_sparkline, get_history,
     compute_snowflake_score, compute_rsi,
     verdict_from_score_and_signal,
